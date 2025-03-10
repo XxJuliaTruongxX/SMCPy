@@ -9,7 +9,6 @@ from .context_manager import ContextManager
 
 
 class BaseStorage(ContextManager):
-
     def __init__(self):
         self.is_restart = False
 
@@ -40,7 +39,6 @@ class BaseStorage(ContextManager):
 
 
 class InMemoryStorage(BaseStorage):
-
     def __init__(self):
         super().__init__()
         self._step_list = []
@@ -70,7 +68,6 @@ class InMemoryStorage(BaseStorage):
 
 
 class HDF5Storage(BaseStorage):
-
     def __init__(self, filename, mode="a"):
         super().__init__()
         self._filename = filename

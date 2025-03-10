@@ -72,7 +72,6 @@ def test_max_particles_warn_threshold(mocked_particles_resample):
 
 
 def test_generate_particles_warning(mocked_particles_resample):
-
     vmcmc = VectorMCMC(None, None, None)
     kernel = VectorMCMCKernel(vmcmc, ["a", "b"])
     particles_warn_threshold = 1.0
