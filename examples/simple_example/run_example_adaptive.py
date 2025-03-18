@@ -7,6 +7,7 @@ from scipy.stats import uniform
 
 from smcpy import AdaptiveSampler, VectorMCMC, VectorMCMCKernel
 from smcpy.paths import GeometricPath
+from smcpy.utils.noise_generator import generate_noisy_data
 from smcpy.utils.plotter import *
 
 
@@ -15,15 +16,6 @@ def eval_model(theta):
     a = theta[:, 0, None]
     b = theta[:, 1, None]
     return a * np.arange(100) + b
-
-
-def generate_data(eval_model, std_dev, plot=True, rng=None):
-    rng = np.random.default_rng() if rng is None else rng
-    y_true = eval_model(np.array([[2, 3.5]]))
-    noisy_data = y_true + rng.normal(0, std_dev, y_true.shape)
-    if plot:
-        plot_noisy_data(x, y_true, noisy_data)
-    return noisy_data
 
 
 def plot_noisy_data(x, y_true, noisy_data):
@@ -36,17 +28,17 @@ def plot_noisy_data(x, y_true, noisy_data):
 
 
 if __name__ == "__main__":
-    rng = np.random.default_rng(200)
-
     std_dev = 2
-    noisy_data = generate_data(eval_model, std_dev, plot=False, rng=rng)
+    model_output = eval_model(np.array([[2, 3.5]]))
+    noisy_data = generate_noisy_data(model_output, std_dev)
+    plot_noisy_data(np.arange(100), model_output, noisy_data)
 
     # require phi=0.2 be included in adaptive sequence
     path = GeometricPath(required_phi=0.2)
 
     priors = [uniform(0.0, 6.0), uniform(0.0, 6.0)]
     vector_mcmc = VectorMCMC(eval_model, noisy_data, priors, std_dev)
-    mcmc_kernel = VectorMCMCKernel(vector_mcmc, ("a", "b"), path=path, rng=rng)
+    mcmc_kernel = VectorMCMCKernel(vector_mcmc, ("a", "b"), path=path)
 
     smc = AdaptiveSampler(mcmc_kernel)
     step_list, mll_list = smc.sample(
