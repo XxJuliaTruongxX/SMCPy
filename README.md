@@ -48,56 +48,83 @@ This software was funded by and developed under the High Performance Computing
 Incubator (HPCI) at NASA Langley Research Center.
 
 ## Example Usage
+Using SMCPy is broken up into 3 main parts:
 
+1. Creating the Model
+2. Generating Noisy Data
+3. Providing Prior Distributions
+4. Setting Up and Running SMCPy
+
+This example usage is an abbreviated version of the [Simple Example Tutorial](./examples/simple_example/run_example_adaptive.ipynb).
+
+We start by generating noisy data that fits a linear model, which is represented as: $$y_i = Ax_i + B + \epsilon_i$$ where $y_i$ is a single observation at $x_i$ and $\epsilon_i$ represents independent and identically distributed measurement noise. For the purposes of the demonstration, we'll generate synthetic data by adding zero-mean, normally distributed noise with standard deviation $\sigma=2$ to a known line, defined by $A=2$ and $B=3.5$ across $x_i = [0, 99]$ **(This will be referenced as our <u>"true line"</u> from here on out).** 
+
+The goal will be to learn the posterior probability distribution over $A$ and $B$ conditioned on the available data.
+
+
+Using SMCPy is broken up into 4 main parts:
+
+1. Creating the Model
+2. Generating Noisy Data
+3. Providing Prior Distributions
+4. Setting Up and Running SMCPy
+
+For this example, applying each of the main parts is as follows:
 ```python
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
+import time
 
 from scipy.stats import uniform
 
-from spring_mass_model import SpringMassModel
-from smcpy.utils.plotter import plot_pairwise
 from smcpy import AdaptiveSampler, VectorMCMC, VectorMCMCKernel
+from smcpy.paths import GeometricPath
+from smcpy.utils.noise_generator import generate_noisy_data
+from smcpy.utils.plotter import *
 
+# 1. Creating the Model
+def eval_model(theta):
+    time.sleep(0.1)  # artificial slowdown to show off progress bar
+    a = theta[:, 0, None]
+    b = theta[:, 1, None]
+    return a * np.arange(100) + b
 
-# Load data
-std_dev = 0.5
-displacement_data = np.genfromtxt('noisy_data.txt')
+# 2. Generating Noisy Data
+std_dev = 2
+model_output = eval_model(np.array([[2, 3.5]]))
+noisy_data = generate_noisy_data(model_output, std_dev)
 
-# Define prior distributions & MCMC kernel
-priors = [uniform(0, 10), uniform(0, 10)]
-vector_mcmc = VectorMCMC(model.evaluate, displacement_data, priors, std_dev)
-mcmc_kernel = VectorMCMCKernel(vector_mcmc, param_order=('K', 'g'))
+# require phi=0.2 be included in adaptive sequence
+path = GeometricPath(required_phi=0.2)
 
-# SMC sampling
+# 3. Providing Prior Distributions
+priors = [uniform(0.0, 6.0), uniform(0.0, 6.0)]
+
+# 4. Setting Up and Running SMCPy
+vector_mcmc = VectorMCMC(eval_model, noisy_data, priors, std_dev)
+mcmc_kernel = VectorMCMCKernel(vector_mcmc, ("a", "b"), path=path)
+
 smc = AdaptiveSampler(mcmc_kernel)
-step_list, mll_list = smc.sample(num_particles=500, num_mcmc_samples=5, target_ess=0.8)
+step_list, mll_list = smc.sample(
+    num_particles=500, num_mcmc_samples=5, target_ess=0.7
+)
 
-# Display results
-print(f'parameter means = {step_list[-1].compute_mean()}')
-plot_pairwise(step_list[-1].params, step_list[-1].weights, save=True,
-              param_labels=['K', 'g'])
+sns.pairplot(pd.DataFrame(step_list[-1].param_dict))
+sns.mpl.pyplot.savefig("pairwise.png")
 ```
+When visualizing the posterior distribution with seaborn pairplot, we can see with the scatter plots that each SMC sample is represented as a dot containing a potential $A$ and $B$ value used to create our true line. For the histograms, we see that the majority of the SMC samples are clustered when $A \approx 2$ and when $B \approx 3.5$. This similarly reflects our true values of when $A = 2$ and $B = 3.5$!
 
-The above code produces probabilistic estimates of K, the spring stiffness
-divided by mass, and g, the gravitational constant on some unknown planet.
-These estimates are in the form of weighted particles and can be visualized by
-plotting the pairwise weights as shown below. The mean of each parameter is
-marked by the dashed red line. The true values for this example were K = 1.67
-and g = 4.62. More details can be found in the [spring mass
-example](https://github.com/nasa/SMCPy/blob/main/examples/spring_mass/run_example.py). To run this model in
-parallel using MPI, the MCMC kernel just needs to be built with the
-ParallelVectorMCMC class in place of VectorMCMC. More details can be found in the
-[MPI example](https://github.com/nasa/SMCPy/blob/main/examples/mpi_example/run_example.py).
+![Simple Tutorial Example](./examples/simple_example/pairwise.png)
 
-<p align="center">
-<img src="https://github.com/nasa/SMCPy/blob/main/examples/spring_mass/spring_mass_smc_example.png" width="400" alt="Pairwise plot"/>
-</p>
+More in-depth explanations can be found in the
+[Simple Tutorial Example](./examples/simple_example/run_example_adaptive.ipynb). 
 
-To run this model in parallel using MPI, the MCMC kernel just needs to be built
-with the ParallelVectorMCMC class in place of VectorMCMC. More details can be found
-in the MPI example (smcpy/examples/mpi_example/).
+To run this model in parallel using MPI, the MCMC kernel just needs to be built with the
+ParallelVectorMCMC class in place of VectorMCMC. More in-depth explanations can be found in the
+[MPI example](./examples/mpi_example/run_adaptive_example.py).
 
-Tests
+Install From Source
 -----
 
 Clone the repo and move into the package directory:
