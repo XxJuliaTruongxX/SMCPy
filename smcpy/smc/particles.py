@@ -33,6 +33,8 @@ AGREEMENT.
 import numpy as np
 import copy
 import functools
+from scipy.spatial.distance import cdist, squareform, pdist
+from sklearn.metrics import pairwise_distances
 from smcpy.utils.checks import Checks
 
 
@@ -186,16 +188,48 @@ class Particles(Checks):
         var = self.compute_variance(package=False)
         return np.sqrt(var)
 
+    def gamma_median_heuristic(self, Z, num_subsample=1000):
+        """
+        Computes the median pairwise distance in a random sub-sample of Z.
+        Returns a \gamma for k(x,y)=\exp(-\gamma ||x-y||^2), according to the median heuristc,
+        i.e. it corresponds to \sigma in k(x,y)=\exp(-0.5*||x-y||^2 / \sigma^2) where
+        \sigma is the median distance. \gamma = 0.5/(\sigma^2)
+        """
+        inds = np.random.permutation(len(Z))[: np.max([num_subsample, len(Z)])]
+        dists = squareform(pdist(Z[inds], "sqeuclidean"))
+        median_dist = np.median(dists[dists > 0])
+        sigma = np.sqrt(0.5 * median_dist)
+        gamma = 0.5 / (sigma**2)
+
+        return gamma
+
     def compute_covariance(self):
-        """
-        Estimates the covariance matrix.
-        """
-        cov = np.cov(self.params.T, ddof=0, aweights=self.weights.flatten())
+        gamma2 = 0.1
+        all_pts = self.params
+        D = all_pts.shape[1]
 
-        if cov.shape == ():
-            cov = cov.reshape(1, 1)
+        array_cov = np.zeros((len(all_pts), D, D))
+        kernel_sigma = 1.0 / self.gamma_median_heuristic(all_pts)
+        kernel_gamma = 1.0 / kernel_sigma
+        for i, y in enumerate(all_pts):
+            R = gamma2 * np.eye(D)
 
-        return cov
+            y_2d = y.reshape(1, -1)
+            Z = np.array(all_pts)
+            if len(Z) > 0:
+                sq_dists = cdist(y_2d, Z, "sqeuclidean")
+                k = np.exp(-kernel_gamma * sq_dists)
+                neg_differences = Z - y
+                G = 2 * kernel_gamma * (k.T * neg_differences)
+
+                step_size = 2.3**2 / 2
+                G *= 2
+                H = np.eye(len(Z)) - 1.0 / len(Z)
+                R += step_size * G.T.dot(H.dot(G))
+
+            L_R = np.linalg.cholesky(R)
+            array_cov[i] = L_R @ L_R.T
+        return np.array(array_cov)
 
     @staticmethod
     def _logsum(Z):

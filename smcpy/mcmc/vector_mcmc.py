@@ -123,9 +123,9 @@ class VectorMCMC:
 
     @rank_zero_output_only
     def proposal(self, inputs, cov):
-        chol = self._ensure_psd_cov_and_do_chol_decomp(cov)
+        chol = np.array([self._ensure_psd_cov_and_do_chol_decomp(mat) for mat in cov])
         z = self.rng.normal(0, 1, inputs.shape)
-        delta = np.matmul(chol, z.T).T
+        delta = np.einsum("ijk,ik->ij", chol, z)
         return inputs + delta
 
     def acceptance_ratio(
