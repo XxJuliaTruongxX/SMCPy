@@ -5,6 +5,7 @@ from tqdm import tqdm
 
 from ..log_likelihoods import Normal
 from ..utils.mpi_utils import rank_zero_output_only
+from scipy.spatial.distance import cdist, squareform, pdist
 
 
 class VectorMCMC:
@@ -43,15 +44,57 @@ class VectorMCMC:
         else:
             raise TypeError("Random number generator must be a numpy generator.")
 
+    def gamma_median_heuristic(self, Z, num_subsample=1000):
+        """
+        Computes the median pairwise distance in a random sub-sample of Z.
+        Returns a \gamma for k(x,y)=\exp(-\gamma ||x-y||^2), according to the median heuristc,
+        i.e. it corresponds to \sigma in k(x,y)=\exp(-0.5*||x-y||^2 / \sigma^2) where
+        \sigma is the median distance. \gamma = 0.5/(\sigma^2)
+        """
+        inds = np.random.permutation(len(Z))[: np.max([num_subsample, len(Z)])]
+        dists = squareform(pdist(Z[inds], "sqeuclidean"))
+        median_dist = np.median(dists[dists > 0])
+        sigma = np.sqrt(0.5 * median_dist)
+        gamma = 0.5 / (sigma**2)
+
+        return gamma
+
+    def compute_covariance(self, inputs):
+        gamma2 = 0.1
+        D = inputs.shape[1]
+
+        array_cov = np.zeros((len(inputs), D, D))
+        kernel_sigma = 1.0 / self.gamma_median_heuristic(inputs)
+        kernel_gamma = 1.0 / kernel_sigma
+        for i, y in enumerate(inputs):
+            R = gamma2 * np.eye(D)
+
+            y_2d = y.reshape(1, -1)
+            Z = np.array(inputs)
+            if len(Z) > 0:
+                sq_dists = cdist(y_2d, Z, "sqeuclidean")
+                k = np.exp(-kernel_gamma * sq_dists)
+                neg_differences = Z - y
+                G = 2 * kernel_gamma * (k.T * neg_differences)
+
+                step_size = 2.3**2 / 2
+                G *= 2
+                H = np.eye(len(Z)) - 1.0 / len(Z)
+                R += step_size * G.T.dot(H.dot(G))
+
+            L_R = np.linalg.cholesky(R)
+            array_cov[i] = L_R @ L_R.T
+        return np.array(array_cov)
+
+    # num_samples is the number of mcmc steps
     def smc_metropolis(self, inputs, num_samples, cov):
         num_particles = inputs.shape[0]
         log_priors, log_like = self._initialize_probabilities(inputs)
-
         for i in range(num_samples):
+            cov = self.compute_covariance(inputs)
             inputs, log_like, log_priors, rejected = self._perform_mcmc_step(
                 inputs, cov, log_like, log_priors
             )
-
             num_accepted = num_particles - np.sum(rejected)
 
             if num_accepted < inputs.shape[0] * 0.3:
@@ -128,6 +171,24 @@ class VectorMCMC:
         delta = np.einsum("ijk,ik->ij", chol, z)
         return inputs + delta
 
+    def multivariate_normal_pdf_batch(self, data_points, means, covariances):
+        """
+        Computes the PDF of multiple N-dimensional multivariate normal distributions in batch.
+        [Your provided function - keeping it unchanged]
+        """
+        M, N = data_points.shape
+
+        dets = np.linalg.det(covariances)
+        inv_covs = np.linalg.inv(covariances)
+        norm_consts = 1.0 / np.sqrt((2 * np.pi) ** N * dets)
+
+        deltas = data_points - means
+        mahalanobis_dist_sq = np.einsum("mi,mij,mj->m", deltas, inv_covs, deltas)
+        # mahalanobis_dist_sq = np.sum(deltas @ inv_covs * deltas, axis=1)
+
+        pdf_vals = norm_consts * np.exp(-0.5 * mahalanobis_dist_sq)
+        return pdf_vals
+
     def acceptance_ratio(
         self,
         new_inputs,
@@ -136,14 +197,38 @@ class VectorMCMC:
         old_log_like,
         new_log_priors,
         old_log_priors,
+        proposal_covariances=None,  # New parameter: covariance matrices for proposal distribution
     ):
+        # Compute posterior probabilities
         old_log_post = self.evaluate_log_posterior(
             old_inputs, old_log_like, old_log_priors
         )
         new_log_post = self.evaluate_log_posterior(
             new_inputs, new_log_like, new_log_priors
         )
-        return np.exp(new_log_post - old_log_post).reshape(-1, 1)
+
+        # Compute proposal probability ratio: q(old|new) / q(new|old)
+        # For symmetric proposals (like normal), this ratio = 1, but we'll compute it generally
+
+        # Proposal probability: q(new|old) - probability of proposing new_inputs given old_inputs
+        q_new_given_old = self.multivariate_normal_pdf_batch(
+            new_inputs, old_inputs, proposal_covariances
+        )
+
+        # Proposal probability: q(old|new) - probability of proposing old_inputs given new_inputs
+        q_old_given_new = self.multivariate_normal_pdf_batch(
+            old_inputs, new_inputs, proposal_covariances
+        )
+
+        # Compute log proposal ratio (safer numerically)
+        log_proposal_ratio = np.log(q_old_given_new) - np.log(q_new_given_old)
+
+        # Metropolis-Hastings acceptance ratio
+        log_alpha = (new_log_post - old_log_post) + log_proposal_ratio
+
+        # Convert to probability and reshape
+        alpha = np.exp(np.minimum(0, log_alpha))  # min(1, exp(log_alpha))
+        return alpha[:, 0].reshape(-1, 1)
 
     @rank_zero_output_only
     def get_rejections(self, acceptance_ratios):
@@ -171,7 +256,7 @@ class VectorMCMC:
         new_log_like = self._eval_log_like_if_prior_nonzero(new_log_priors, new_inputs)
 
         accpt_ratio = self.acceptance_ratio(
-            new_inputs, inputs, new_log_like, log_like, new_log_priors, log_priors
+            new_inputs, inputs, new_log_like, log_like, new_log_priors, log_priors, cov
         )
 
         rejected = self.get_rejections(accpt_ratio)
