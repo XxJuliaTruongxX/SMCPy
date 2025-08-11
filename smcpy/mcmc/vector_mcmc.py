@@ -77,7 +77,7 @@ class VectorMCMC:
                 neg_differences = Z - y
                 G = 2 * kernel_gamma * (k.T * neg_differences)
 
-                step_size = 2.3**2 / 2
+                step_size = 2.38**2 / D
                 G *= 2
                 H = np.eye(len(Z)) - 1.0 / len(Z)
                 R += step_size * G.T.dot(H.dot(G))
@@ -197,7 +197,8 @@ class VectorMCMC:
         old_log_like,
         new_log_priors,
         old_log_priors,
-        proposal_covariances=None,  # New parameter: covariance matrices for proposal distribution
+        proposal_covariances,  # New parameter: covariance matrices for proposal distribution
+        new_proposal_covariances,
     ):
         # Compute posterior probabilities
         old_log_post = self.evaluate_log_posterior(
@@ -217,7 +218,7 @@ class VectorMCMC:
 
         # Proposal probability: q(old|new) - probability of proposing old_inputs given new_inputs
         q_old_given_new = self.multivariate_normal_pdf_batch(
-            old_inputs, new_inputs, proposal_covariances
+            old_inputs, new_inputs, new_proposal_covariances
         )
 
         # Compute log proposal ratio (safer numerically)
@@ -252,11 +253,19 @@ class VectorMCMC:
 
     def _perform_mcmc_step(self, inputs, cov, log_like, log_priors):
         new_inputs = self.proposal(inputs, cov)
+        new_cov = self.compute_covariance(new_inputs)
         new_log_priors = self.evaluate_log_priors(new_inputs)
         new_log_like = self._eval_log_like_if_prior_nonzero(new_log_priors, new_inputs)
 
         accpt_ratio = self.acceptance_ratio(
-            new_inputs, inputs, new_log_like, log_like, new_log_priors, log_priors, cov
+            new_inputs,
+            inputs,
+            new_log_like,
+            log_like,
+            new_log_priors,
+            log_priors,
+            cov,
+            new_cov,
         )
 
         rejected = self.get_rejections(accpt_ratio)
