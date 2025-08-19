@@ -54,7 +54,7 @@ class VectorMCMC:
         inds = np.random.permutation(len(Z))[: np.max([num_subsample, len(Z)])]
         dists = squareform(pdist(Z[inds], "sqeuclidean"))
         median_dist = np.median(dists[dists > 0])
-        sigma = np.sqrt(0.5 * median_dist)
+        sigma = np.sqrt(median_dist)
         gamma = 0.5 / (sigma**2)
 
         return gamma
