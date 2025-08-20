@@ -6,6 +6,7 @@ from tqdm import tqdm
 from ..log_likelihoods import Normal
 from ..utils.mpi_utils import rank_zero_output_only
 from scipy.spatial.distance import cdist, squareform, pdist
+from sklearn.metrics.pairwise import pairwise_kernels
 
 
 class VectorMCMC:
@@ -44,49 +45,31 @@ class VectorMCMC:
         else:
             raise TypeError("Random number generator must be a numpy generator.")
 
-    def gamma_median_heuristic(self, Z, num_subsample=1000):
-        """
-        Computes the median pairwise distance in a random sub-sample of Z.
-        Returns a \gamma for k(x,y)=\exp(-\gamma ||x-y||^2), according to the median heuristc,
-        i.e. it corresponds to \sigma in k(x,y)=\exp(-0.5*||x-y||^2 / \sigma^2) where
-        \sigma is the median distance. \gamma = 0.5/(\sigma^2)
-        """
-        inds = np.random.permutation(len(Z))[: np.max([num_subsample, len(Z)])]
-        dists = squareform(pdist(Z[inds], "sqeuclidean"))
-        median_dist = np.median(dists[dists > 0])
-        sigma = np.sqrt(median_dist)
-        gamma = 0.5 / (sigma**2)
-
-        return gamma
-
     def compute_covariance(self, inputs):
-        gamma2 = 0.1
+        def rbf(x, sigma):
+            gamma = 1 / (2 * sigma**2)
+            return pairwise_kernels(x, metric="rbf", gamma=gamma)
+
+        def median_dist(x):
+            pairwise_dist = pdist(x, metric="euclidean")
+            return np.median(pairwise_dist)
+
         D = inputs.shape[1]
+        NU = 2.38 / np.sqrt(D)
 
-        array_cov = np.zeros((len(inputs), D, D))
-        kernel_sigma = 1.0 / self.gamma_median_heuristic(inputs)
-        kernel_gamma = 1.0 / kernel_sigma
-        for i, y in enumerate(inputs):
-            R = gamma2 * np.eye(D)
+        rbfs = rbf(inputs, sigma=median_dist(inputs))  # kernelernel grads
 
-            y_2d = y.reshape(1, -1)
-            Z = np.array(inputs)
-            if len(Z) > 0:
-                sq_dists = cdist(y_2d, Z, "sqeuclidean")
-                k = np.exp(-kernel_gamma * sq_dists)
-                neg_differences = Z - y
-                G = 2 * kernel_gamma * (k.T * neg_differences)
+        lst = []
+        for r in rbfs:
+            prop = np.cov(inputs.T, aweights=r)
+            if prop.shape == ():
+                prop = prop.reshape(1, 1)
+            lst.append(prop)
 
-                step_size = 2.38**2 / D
-                G *= 2
-                H = np.eye(len(Z)) - 1.0 / len(Z)
-                R += step_size * G.T.dot(H.dot(G))
+        R = NU**2 * np.array(lst)
 
-            L_R = np.linalg.cholesky(R)
-            array_cov[i] = L_R @ L_R.T
-        return np.array(array_cov)
+        return R
 
-    # num_samples is the number of mcmc steps
     def smc_metropolis(self, inputs, num_samples, cov):
         num_particles = inputs.shape[0]
         log_priors, log_like = self._initialize_probabilities(inputs)
@@ -222,6 +205,14 @@ class VectorMCMC:
         )
 
         # Compute log proposal ratio (safer numerically)
+        eps = np.finfo(float).eps  # Machine epsilon (~2.22e-16)
+        # Or use a slightly larger value: eps = 1e-300
+
+        q_new_given_old = np.maximum(q_new_given_old, eps)
+        q_old_given_new = np.maximum(q_old_given_new, eps)
+
+        # print("qold", q_old_given_new)
+        # print("qnew", q_new_given_old)
         log_proposal_ratio = np.log(q_old_given_new) - np.log(q_new_given_old)
 
         # Metropolis-Hastings acceptance ratio
