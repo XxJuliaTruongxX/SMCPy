@@ -48,6 +48,7 @@ class VectorMCMC:
     def compute_covariance(self, inputs):
         def rbf(x, sigma):
             gamma = 1 / (2 * sigma**2)
+            x = np.nan_to_num(x, nan=0.0, posinf=1e10, neginf=-1e10)
             return pairwise_kernels(x, metric="rbf", gamma=gamma)
 
         def median_dist(x):
@@ -59,31 +60,23 @@ class VectorMCMC:
 
         rbfs = rbf(inputs, sigma=median_dist(inputs))  # kernelernel grads
 
-        lst = []
-        for r in rbfs:
-            prop = np.cov(inputs.T, aweights=r)
-            if prop.shape == ():
-                prop = prop.reshape(1, 1)
-            lst.append(prop)
-
-        R = NU**2 * np.array(lst)
-
+        R = NU**2 * np.array([np.cov(inputs.T, aweights=r) for r in rbfs])
         return R
 
     def smc_metropolis(self, inputs, num_samples, cov):
         num_particles = inputs.shape[0]
         log_priors, log_like = self._initialize_probabilities(inputs)
+        cov = self.compute_covariance(inputs)
         for i in range(num_samples):
-            cov = self.compute_covariance(inputs)
-            inputs, log_like, log_priors, rejected = self._perform_mcmc_step(
+            inputs, log_like, log_priors, rejected, newcov = self._perform_mcmc_step(
                 inputs, cov, log_like, log_priors
             )
             num_accepted = num_particles - np.sum(rejected)
 
             if num_accepted < inputs.shape[0] * 0.3:
-                cov = cov * 1 / 5
+                cov = newcov * 1 / 5
             if num_accepted > inputs.shape[0] * 0.7:
-                cov = cov * 2
+                cov = newcov * 2
 
         return inputs, log_like
 
@@ -103,7 +96,7 @@ class VectorMCMC:
         log_priors, log_like = self._initialize_probabilities(inputs)
 
         for i in tqdm(range(1, num_samples + 1), disable=not progress_bar):
-            inputs, log_like, log_priors, rejected = self._perform_mcmc_step(
+            inputs, log_like, log_priors, rejected, newcov = self._perform_mcmc_step(
                 inputs, cov, log_like, log_priors
             )
             chain[:, :, i] = inputs
@@ -183,6 +176,9 @@ class VectorMCMC:
         proposal_covariances,  # New parameter: covariance matrices for proposal distribution
         new_proposal_covariances,
     ):
+        proposal_covariances += np.eye(proposal_covariances.shape[1]) * 1e-6
+        
+        new_proposal_covariances += np.eye(new_proposal_covariances.shape[1]) * 1e-6
         # Compute posterior probabilities
         old_log_post = self.evaluate_log_posterior(
             old_inputs, old_log_like, old_log_priors
@@ -265,7 +261,7 @@ class VectorMCMC:
         log_like = np.where(rejected, log_like, new_log_like)
         log_priors = np.where(rejected, log_priors, new_log_priors)
 
-        return inputs, log_like, log_priors, rejected
+        return inputs, log_like, log_priors, rejected, new_cov
 
     @staticmethod
     def _is_adapt_iteration(adapt_interval, idx, adapt_delay):
