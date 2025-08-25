@@ -60,7 +60,9 @@ class VectorMCMC:
 
         rbfs = rbf(inputs, sigma=median_dist(inputs))  # kernelernel grads
 
-        R = NU**2 * np.array([np.cov(inputs.T, aweights=r) for r in rbfs])
+        R = NU**2 * np.array(
+            [np.atleast_2d(np.cov(inputs.T, aweights=r)) for r in rbfs]
+        )
         return R
 
     def smc_metropolis(self, inputs, num_samples, cov):
@@ -177,7 +179,7 @@ class VectorMCMC:
         new_proposal_covariances,
     ):
         proposal_covariances += np.eye(proposal_covariances.shape[1]) * 1e-6
-        
+
         new_proposal_covariances += np.eye(new_proposal_covariances.shape[1]) * 1e-6
         # Compute posterior probabilities
         old_log_post = self.evaluate_log_posterior(
@@ -260,8 +262,9 @@ class VectorMCMC:
         inputs = np.where(rejected, inputs, new_inputs)
         log_like = np.where(rejected, log_like, new_log_like)
         log_priors = np.where(rejected, log_priors, new_log_priors)
+        cov = np.where(rejected[:, None], cov, new_cov)
 
-        return inputs, log_like, log_priors, rejected, new_cov
+        return inputs, log_like, log_priors, rejected, cov
 
     @staticmethod
     def _is_adapt_iteration(adapt_interval, idx, adapt_delay):
