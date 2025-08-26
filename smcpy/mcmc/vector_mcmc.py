@@ -77,10 +77,10 @@ class VectorMCMC:
             num_accepted = num_particles - np.sum(rejected)
 
             if num_accepted < inputs.shape[0] * 0.3:
-                scale = 1 / 5
+                scale *= 1 / 5
                 cov = newcov * scale
             if num_accepted > inputs.shape[0] * 0.7:
-                scale = 2
+                scale *= 2
                 cov = newcov * scale
 
         return inputs, log_like
