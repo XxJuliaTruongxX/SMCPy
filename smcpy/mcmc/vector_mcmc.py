@@ -69,16 +69,19 @@ class VectorMCMC:
         num_particles = inputs.shape[0]
         log_priors, log_like = self._initialize_probabilities(inputs)
         cov = self.compute_covariance(inputs)
+        scale = 1
         for i in range(num_samples):
             inputs, log_like, log_priors, rejected, newcov = self._perform_mcmc_step(
-                inputs, cov, log_like, log_priors
+                inputs, cov, log_like, log_priors, scale
             )
             num_accepted = num_particles - np.sum(rejected)
 
             if num_accepted < inputs.shape[0] * 0.3:
-                cov = newcov * 1 / 5
+                scale = 1 / 5
+                cov = newcov * scale
             if num_accepted > inputs.shape[0] * 0.7:
-                cov = newcov * 2
+                scale = 2
+                cov = newcov * scale
 
         return inputs, log_like
 
@@ -240,9 +243,9 @@ class VectorMCMC:
         log_like = self.evaluate_log_likelihood(inputs)
         return log_priors, log_like
 
-    def _perform_mcmc_step(self, inputs, cov, log_like, log_priors):
+    def _perform_mcmc_step(self, inputs, cov, log_like, log_priors, scale):
         new_inputs = self.proposal(inputs, cov)
-        new_cov = self.compute_covariance(new_inputs)
+        new_cov = self.compute_covariance(new_inputs) * scale
         new_log_priors = self.evaluate_log_priors(new_inputs)
         new_log_like = self._eval_log_like_if_prior_nonzero(new_log_priors, new_inputs)
 
