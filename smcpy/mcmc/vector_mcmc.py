@@ -198,11 +198,11 @@ class VectorMCMC:
         new_proposal_covariances,
     ):
         proposal_covariances = (
-            proposal_covariances + np.eye(proposal_covariances.shape[1]) * 1e-6
+            proposal_covariances + np.eye(proposal_covariances.shape[1]) * 1e-12
         )
 
         new_proposal_covariances = (
-            proposal_covariances + np.eye(new_proposal_covariances.shape[1]) * 1e-6
+            proposal_covariances + np.eye(new_proposal_covariances.shape[1]) * 1e-12
         )
         # Compute posterior probabilities
         old_log_post = self.evaluate_log_posterior(
