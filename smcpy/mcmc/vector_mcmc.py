@@ -152,23 +152,41 @@ class VectorMCMC:
         delta = np.einsum("ijk,ik->ij", chol, z)
         return inputs + delta
 
-    def multivariate_normal_pdf_batch(self, data_points, means, covariances):
+    def multivariate_normal_logpdf_batch(self, data_points, means, covariances):
         """
-        Computes the PDF of multiple N-dimensional multivariate normal distributions in batch.
-        [Your provided function - keeping it unchanged]
+        Computes the log-PDF of multiple N-dimensional multivariate normal distributions in batch.
+
+        Parameters:
+        - data_points: (M, N) array of M data points in N dimensions
+        - means: (M, N) array of M mean vectors
+        - covariances: (M, N, N) array of M covariance matrices
+
+        Returns:
+        - log_pdf_vals: (M,) array of log-PDF values
         """
         M, N = data_points.shape
 
-        dets = np.linalg.det(covariances)
-        inv_covs = np.linalg.inv(covariances)
-        norm_consts = 1.0 / np.sqrt((2 * np.pi) ** N * dets)
+        # Compute log determinant (more numerically stable)
+        sign, log_dets = np.linalg.slogdet(covariances)
 
+        # Check for non-positive definite matrices
+        if np.any(sign <= 0):
+            raise ValueError("Covariance matrices must be positive definite")
+
+        # Compute inverse covariances
+        inv_covs = np.linalg.inv(covariances)
+
+        # Log normalization constant: -0.5 * (N * log(2π) + log|Σ|)
+        log_norm_consts = -0.5 * (N * np.log(2 * np.pi) + log_dets)
+
+        # Compute Mahalanobis distance squared
         deltas = data_points - means
         mahalanobis_dist_sq = np.einsum("mi,mij,mj->m", deltas, inv_covs, deltas)
-        # mahalanobis_dist_sq = np.sum(deltas @ inv_covs * deltas, axis=1)
 
-        pdf_vals = norm_consts * np.exp(-0.5 * mahalanobis_dist_sq)
-        return pdf_vals
+        # Compute log-PDF: log_norm_const - 0.5 * mahalanobis_dist_sq
+        log_pdf_vals = log_norm_consts - 0.5 * mahalanobis_dist_sq
+
+        return log_pdf_vals
 
     def acceptance_ratio(
         self,
@@ -181,9 +199,13 @@ class VectorMCMC:
         proposal_covariances,  # New parameter: covariance matrices for proposal distribution
         new_proposal_covariances,
     ):
-        proposal_covariances += np.eye(proposal_covariances.shape[1]) * 1e-6
+        proposal_covariances = (
+            proposal_covariances + np.eye(proposal_covariances.shape[1]) * 1e-6
+        )
 
-        new_proposal_covariances += np.eye(new_proposal_covariances.shape[1]) * 1e-6
+        new_proposal_covariances = (
+            proposal_covariances + np.eye(new_proposal_covariances.shape[1]) * 1e-6
+        )
         # Compute posterior probabilities
         old_log_post = self.evaluate_log_posterior(
             old_inputs, old_log_like, old_log_priors
@@ -196,12 +218,12 @@ class VectorMCMC:
         # For symmetric proposals (like normal), this ratio = 1, but we'll compute it generally
 
         # Proposal probability: q(new|old) - probability of proposing new_inputs given old_inputs
-        q_new_given_old = self.multivariate_normal_pdf_batch(
+        q_new_given_old = self.multivariate_normal_logpdf_batch(
             new_inputs, old_inputs, proposal_covariances
         )
 
         # Proposal probability: q(old|new) - probability of proposing old_inputs given new_inputs
-        q_old_given_new = self.multivariate_normal_pdf_batch(
+        q_old_given_new = self.multivariate_normal_logpdf_batch(
             old_inputs, new_inputs, new_proposal_covariances
         )
 
@@ -214,7 +236,7 @@ class VectorMCMC:
 
         # print("qold", q_old_given_new)
         # print("qnew", q_new_given_old)
-        log_proposal_ratio = np.log(q_old_given_new) - np.log(q_new_given_old)
+        log_proposal_ratio = q_old_given_new - q_new_given_old
 
         # Metropolis-Hastings acceptance ratio
         log_alpha = (new_log_post - old_log_post) + log_proposal_ratio
