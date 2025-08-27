@@ -72,7 +72,7 @@ class VectorMCMC:
         scale = 1
         for i in range(num_samples):
             inputs, log_like, log_priors, rejected, newcov = self._perform_mcmc_step(
-                inputs, cov, log_like, log_priors, scale
+                inputs, log_like, log_priors, scale
             )
             num_accepted = num_particles - np.sum(rejected)
 
@@ -102,7 +102,7 @@ class VectorMCMC:
 
         for i in tqdm(range(1, num_samples + 1), disable=not progress_bar):
             inputs, log_like, log_priors, rejected, newcov = self._perform_mcmc_step(
-                inputs, cov, log_like, log_priors
+                inputs, log_like, log_priors
             )
             chain[:, :, i] = inputs
 
@@ -265,7 +265,8 @@ class VectorMCMC:
         log_like = self.evaluate_log_likelihood(inputs)
         return log_priors, log_like
 
-    def _perform_mcmc_step(self, inputs, cov, log_like, log_priors, scale):
+    def _perform_mcmc_step(self, inputs, log_like, log_priors, scale):
+        cov = self.compute_covariance(inputs)
         new_inputs = self.proposal(inputs, cov)
         new_cov = self.compute_covariance(new_inputs) * scale
         new_log_priors = self.evaluate_log_priors(new_inputs)
