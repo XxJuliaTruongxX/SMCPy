@@ -33,6 +33,8 @@ class VectorMCMC:
         self._priors = priors
         self._log_like_func = log_like_func(self.evaluate_model, data, log_like_args)
         self._rng = np.random.default_rng()
+        self._scale_factor = 1
+        self._orig_inputs = None
 
     @property
     def rng(self):
@@ -49,7 +51,7 @@ class VectorMCMC:
         def rbf(x, sigma):
             gamma = 1 / (2 * sigma**2)
             x = np.nan_to_num(x, nan=0.0, posinf=1e10, neginf=-1e10)
-            return pairwise_kernels(x, metric="rbf", gamma=gamma)
+            return pairwise_kernels(self._orig_inputs, metric="rbf", gamma=gamma)
 
         def median_dist(x):
             pairwise_dist = pdist(x, metric="euclidean")
@@ -63,25 +65,21 @@ class VectorMCMC:
         R = NU**2 * np.array(
             [np.atleast_2d(np.cov(inputs.T, aweights=r)) for r in rbfs]
         )
-        return R
+        return R * self._scale_factor
 
     def smc_metropolis(self, inputs, num_samples, cov):
         num_particles = inputs.shape[0]
         log_priors, log_like = self._initialize_probabilities(inputs)
-        cov = self.compute_covariance(inputs)
-        scale = 1
         for i in range(num_samples):
             inputs, log_like, log_priors, rejected, newcov = self._perform_mcmc_step(
-                inputs, log_like, log_priors, scale
+                inputs, log_like, log_priors
             )
             num_accepted = num_particles - np.sum(rejected)
 
             if num_accepted < inputs.shape[0] * 0.3:
-                scale *= 1 / 5
-                cov = newcov * scale
+                self._scale_factor *= 1 / 5
             if num_accepted > inputs.shape[0] * 0.7:
-                scale *= 2
-                cov = newcov * scale
+                self._scale_factor *= 2
 
         return inputs, log_like
 
@@ -265,10 +263,11 @@ class VectorMCMC:
         log_like = self.evaluate_log_likelihood(inputs)
         return log_priors, log_like
 
-    def _perform_mcmc_step(self, inputs, log_like, log_priors, scale):
+    def _perform_mcmc_step(self, inputs, log_like, log_priors):
+        self._orig_inputs = inputs.copy()
         cov = self.compute_covariance(inputs)
         new_inputs = self.proposal(inputs, cov)
-        new_cov = self.compute_covariance(new_inputs) * scale
+        new_cov = self.compute_covariance(new_inputs)
         new_log_priors = self.evaluate_log_priors(new_inputs)
         new_log_like = self._eval_log_like_if_prior_nonzero(new_log_priors, new_inputs)
 
